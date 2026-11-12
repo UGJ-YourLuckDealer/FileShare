@@ -60,7 +60,8 @@ Title ──Start──▶ Counter(손님 대화) ──책상 클릭──▶ M
 | `Dialogue/DeskInteraction.cs` (macro) 책상 클릭 | `SceneFlow.GoToMaking(manager)` 호출 |
 | `SceneFlow.GoToMaking()` | 다음 손님 번호(`customer + 1`)와 손님 수를 기록 → Making 로드 |
 | `SceneFlowLink.OnDestroy()` | 팀원 코드가 `SceneManager`로 직접 씬을 바꿔도 다음 손님 번호가 이어지도록 `SceneFlow.NoteCounterLeft()` 기록 |
-| `DayDisplay` (GameSystems) | Counter·Making 왼쪽 위 "Day N" 표시, 하루 첫 손님 때 가운데 "Day N" 배너 |
+| `DayDisplay` (GameSystems) | 하루 첫 손님 전에 한 번만 가운데 "Day N" 표시 (`GameEvents.DayStarted`) → 끝나면 방문 시퀀스 시작 신호 |
+| `CustomerVisit` / `GameEvents.CustomerVisitReady` | **손님 방문 시퀀스(문 소리 → 초상화 Fade → 대화)를 시작해도 된다는 신호.** 하루 첫 손님은 날짜 표시 후, 이후 손님은 Fade In 후. `CustomerVisit.WhenReady(customer => ...)`로 받으면 됨 |
 
 ### 3-3. Making (키링 제작 → Submit)
 | 순서 | 코드 | 하는 일 |
@@ -150,6 +151,8 @@ Title ──Start──▶ Counter(손님 대화) ──책상 클릭──▶ M
 | `CustomerFinished(customer)` | `SceneFlow.ReturnFromMaking()` | `GameFlowManager`(손님 수·종료 판단), `JudgementSystem` |
 | `GameEnded(GameResult)` | `GameFlowManager.EndGame()` | `SceneFlow`(LastResult 저장) |
 | `PhaseChanged(GamePhase)` | `GameFlowManager` | (구독자 없음 — 화면 전환 담당이 쓸 수 있도록 남겨 둠) |
+| `DayStarted(int day)` | `DayDisplay` (하루 첫 손님 전) | (방문 시퀀스·연출용) |
+| `CustomerVisitReady(int customer)` | `CustomerVisit.MarkReady()` ← `DayDisplay` | 손님 방문 시퀀스 (macro, `CustomerVisit.WhenReady`) |
 | `OrderAccepted`, `IngredientUsed`, `KeyringServed` | (실제 흐름에서 보내는 곳 없음) | `CapitalSystem`, `GameFlowManager`, `JudgementSystem` |
 
 > 이벤트를 구독한 MonoBehaviour는 `OnDisable`/`OnDestroy`에서 반드시 `-=`로 해제해 주세요.
@@ -166,24 +169,32 @@ Title ──Start──▶ Counter(손님 대화) ──책상 클릭──▶ M
 | `UI/UIHoverScale.cs` | 커서를 올리면 1.15배 확대, 일시정지 중에도 동작 | 버튼에 붙이기 |
 | `UI/SettingsMenu.cs` | 설정 팝업: 볼륨(PlayerPrefs 저장) / Resume / Title / Quit, ESC로 열고 닫기, 열려 있으면 일시정지 | `SettingsUI` 프리팹 배치 |
 | `UI/SettlementPopup.cs` | Submit 후 결산 팝업 (3-3 참고). UI는 실행 중에 코드로 생성 | Making `SceneFlowLink` 오브젝트에 부착됨. 문구·색·시간은 인스펙터 |
-| `UI/DayDisplay.cs` | "Day N" 라벨과 하루 시작 배너 | GameSystems 프리팹에 부착됨 |
+| `UI/DayDisplay.cs` | 하루 첫 손님 전 "Day N" 표시 → 방문 시퀀스 시작 신호. `showDayLabel`을 켜면 왼쪽 위에 Day N 상시 표시 | GameSystems 프리팹에 부착됨 |
 | `Core/Judgement/TipFeedback.cs` | 화면 중앙 Tip!/No Tip (결산 팝업이 있는 씬에서는 표시 안 함) | GameSystems 프리팹에 부착됨 |
 | `UI/GameOverDialogue.cs` | LOSE일 때 대사창 슬라이드 업 + "Bankrupt!" | Result 씬 |
 
 ---
 
-## 8. 씬을 넘어 유지되는 값 (static)
+## 8. 씬을 넘어 유지되는 값 (static) — `Core/GameSession.cs` 한 곳에서 관리
 
-| 값 | 위치 | 초기화 |
+hermit 파트의 static 값과 초기화는 **`GameSession.cs` 한 파일**에 모여 있습니다. 다른 파일은 static 값이나 `[RuntimeInitializeOnLoadMethod]`를 따로 두지 않고 `GameSession`의 값을 읽고 씁니다. 바깥에서 쓰는 이름(`SceneFlow.NextCustomerIndex`, `DayCycle.CurrentDay` 등)은 그대로입니다.
+
+| 값 (`GameSession.`) | 의미 | 바깥에서 읽는 이름 |
 |---|---|---|
-| `SceneFlow.NextCustomerIndex` / `LastResult` | `Core/Flow/SceneFlow.cs` | `StartNewGame()` |
-| `DayCycle.CurrentDay` / 이어받을 자본 | `Core/Flow/DayCycle.cs` | `DayCycle.BeginNewGame()` |
-| GameSystems 오브젝트 | `PersistentSystems.Instance` | `PersistentSystems.ResetSession()` |
-| `Customer_Data.receipt`, 재료 재고 (macro) | `Making/Customer_Data.cs` | (팀원 코드) |
+| `NextCustomerIndex`, `CustomerCount`, `LastResult` | 다음 손님 번호, 오늘 손님 수, 마지막 결과 | `SceneFlow.NextCustomerIndex`, `SceneFlow.LastResult` |
+| `CurrentDay`, `CarriedCapital` | 현재 일차, 다음 날로 이어받을 자본 | `DayCycle.CurrentDay` |
+| `VisitReady`, `ReadyCustomer` | 손님 방문 시퀀스 시작 가능 여부·손님 번호 | `CustomerVisit.IsReady`, `CustomerVisit.ReadyCustomer` |
+| `Systems`, `Fader` | 유지 중인 GameSystems, ScreenFader | `PersistentSystems.Instance`, `ScreenFader.Instance` |
 
-> 프로젝트가 **Enter Play Mode에서 Domain Reload를 끈 상태**라 static 값이 Play 사이에 남습니다. hermit 코드는 `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]`로 Play 시작마다 초기화합니다. 새 static 값을 만들 때 같은 방식으로 초기화해 주세요.
+| 초기화 함수 | 언제 |
+|---|---|
+| `GameSession.ResetAll()` | **Play 시작마다 자동.** 모든 값 + `GameEvents` 구독(`GameEvents.ClearAll`) 초기화 |
+| `GameSession.ResetCustomerProgress()` | 새 게임·다음 날 시작 (`SceneFlow.StartNewGame`) — 손님 진행만 처음부터 |
+| `GameSession.ResetDays()` | 1일차부터 다시 (`DayCycle.BeginNewGame`) |
+| `GameSession.ResetVisit()` | Counter에 들어올 때마다 (`CustomerVisit.Reset`) |
 
----
+> 프로젝트가 **Enter Play Mode에서 Domain Reload를 끈 상태**라 static 값이 Play 사이에 남습니다. hermit 파트에 새 static 값이 필요하면 `GameSession`에 추가하고 `ResetAll()`에서 초기화해 주세요.
+> 팀원 코드의 static(`Customer_Data.receipt`·재료 재고, `AudioService` 등)은 각 팀원 파일에 있습니다.
 
 ## 9. 팀원 작업 시 주의할 점
 
